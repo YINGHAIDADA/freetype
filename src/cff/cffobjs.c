@@ -4,7 +4,7 @@
  *
  *   OpenType objects manager (body).
  *
- * Copyright (C) 1996-2023 by
+ * Copyright (C) 1996-2021 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -69,8 +69,8 @@
     FT_Module         module;
 
 
-    module = FT_Get_Module( font->library, "pshinter" );
-
+    module = FT_Get_Module( size->root.face->driver->root.library,
+                            "pshinter" );
     return ( module && pshinter && pshinter->get_globals_funcs )
            ? pshinter->get_globals_funcs( module )
            : 0;
@@ -182,7 +182,8 @@
       goto Exit;
 
     cff_make_private_dict( &font->top_font, &priv );
-    error = funcs->create( memory, &priv, &internal->topfont );
+    error = funcs->create( cffsize->face->memory, &priv,
+                             &internal->topfont );
     if ( error )
       goto Exit;
 
@@ -192,7 +193,8 @@
 
 
       cff_make_private_dict( sub, &priv );
-      error = funcs->create( memory, &priv, &internal->subfonts[i - 1] );
+      error = funcs->create( cffsize->face->memory, &priv,
+                               &internal->subfonts[i - 1] );
       if ( error )
         goto Exit;
     }
@@ -379,7 +381,8 @@
       FT_Module  module;
 
 
-      module = FT_Get_Module( slot->library, "pshinter" );
+      module = FT_Get_Module( slot->face->driver->root.library,
+                              "pshinter" );
       if ( module )
       {
         T2_Hints_Funcs  funcs;
@@ -408,7 +411,9 @@
     FT_String*  result;
 
 
-    FT_MEM_STRDUP( result, source );
+    (void)FT_STRDUP( result, source );
+
+    FT_UNUSED( error );
 
     return result;
   }
@@ -421,23 +426,32 @@
   static void
   remove_subset_prefix( FT_String*  name )
   {
-    FT_UInt32  i = 0, idx = 0;
+    FT_Int32  idx             = 0;
+    FT_Int32  length          = (FT_Int32)ft_strlen( name ) + 1;
+    FT_Bool   continue_search = 1;
 
 
-    /* six ASCII uppercase letters followed by a plus sign */
-    while ( 'A' <= name[i] && name[i++] <= 'Z' &&
-            'A' <= name[i] && name[i++] <= 'Z' &&
-            'A' <= name[i] && name[i++] <= 'Z' &&
-            'A' <= name[i] && name[i++] <= 'Z' &&
-            'A' <= name[i] && name[i++] <= 'Z' &&
-            'A' <= name[i] && name[i++] <= 'Z' &&
-                              name[i++] == '+' )
+    while ( continue_search )
     {
-      idx = i;
-    }
+      if ( length >= 7 && name[6] == '+' )
+      {
+        for ( idx = 0; idx < 6; idx++ )
+        {
+          /* ASCII uppercase letters */
+          if ( !( 'A' <= name[idx] && name[idx] <= 'Z' ) )
+            continue_search = 0;
+        }
 
-    if ( idx )
-      FT_MEM_MOVE( name, name + idx, ft_strlen( name + idx ) + 1 );
+        if ( continue_search )
+        {
+          for ( idx = 7; idx < length; idx++ )
+            name[idx - 7] = name[idx];
+          length -= 7;
+        }
+      }
+      else
+        continue_search = 0;
+    }
   }
 
 
@@ -447,20 +461,42 @@
   remove_style( FT_String*        family_name,
                 const FT_String*  style_name )
   {
-    FT_String*        f = family_name + ft_strlen( family_name );
-    const FT_String*  s =  style_name + ft_strlen(  style_name );
+    FT_Int32  family_name_length, style_name_length;
 
 
-    /* compare strings moving backwards */
-    while ( s > style_name )
-      if ( f == family_name || *--s != *--f )
-        return;
+    family_name_length = (FT_Int32)ft_strlen( family_name );
+    style_name_length  = (FT_Int32)ft_strlen( style_name );
 
-    /* terminate and remove special characters */
-    do
-      *f = '\0';
-    while ( f-- > family_name                                    &&
-            ( *f == '-' || *f == ' ' || *f == '_' || *f == '+' ) );
+    if ( family_name_length > style_name_length )
+    {
+      FT_Int  idx;
+
+
+      for ( idx = 1; idx <= style_name_length; idx++ )
+      {
+        if ( family_name[family_name_length - idx] !=
+             style_name[style_name_length - idx] )
+          break;
+      }
+
+      if ( idx > style_name_length )
+      {
+        /* family_name ends with style_name; remove it */
+        idx = family_name_length - style_name_length - 1;
+
+        /* also remove special characters     */
+        /* between real family name and style */
+        while ( idx > 0                     &&
+                ( family_name[idx] == '-' ||
+                  family_name[idx] == ' ' ||
+                  family_name[idx] == '_' ||
+                  family_name[idx] == '+' ) )
+          idx--;
+
+        if ( idx > 0 )
+          family_name[idx + 1] = '\0';
+      }
+    }
   }
 
 
@@ -653,13 +689,13 @@
 
         /* In Multiple Master CFFs, two SIDs hold the Normalize Design  */
         /* Vector (NDV) and Convert Design Vector (CDV) charstrings,    */
-        /* which may contain null bytes in the middle of the data, too. */
+        /* which may contain NULL bytes in the middle of the data, too. */
         /* We thus access `cff->strings' directly.                      */
         for ( idx = 1; idx < cff->num_strings; idx++ )
         {
           FT_Byte*    s1    = cff->strings[idx - 1];
           FT_Byte*    s2    = cff->strings[idx];
-          FT_PtrDist  s1len = s2 - s1 - 1; /* without the final null byte */
+          FT_PtrDist  s1len = s2 - s1 - 1; /* without the final NULL byte */
           FT_PtrDist  l;
 
 
@@ -688,15 +724,22 @@
 
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
       {
+        FT_Service_MultiMasters       mm  = (FT_Service_MultiMasters)face->mm;
+        FT_Service_MetricsVariations  var = (FT_Service_MetricsVariations)face->var;
+
         FT_UInt  instance_index = (FT_UInt)face_index >> 16;
 
 
         if ( FT_HAS_MULTIPLE_MASTERS( cffface ) &&
+             mm                                 &&
              instance_index > 0                 )
         {
-          error = FT_Set_Named_Instance( cffface, instance_index );
+          error = mm->set_instance( cffface, instance_index );
           if ( error )
             goto Exit;
+
+          if ( var )
+            var->metrics_adjust( cffface );
         }
       }
 #endif /* TT_CONFIG_OPTION_GX_VAR_SUPPORT */
@@ -990,10 +1033,12 @@
         cffface->style_flags = flags;
       }
 
+#ifndef FT_CONFIG_OPTION_NO_GLYPH_NAMES
       /* CID-keyed CFF or CFF2 fonts don't have glyph names -- the SFNT */
       /* loader has unset this flag because of the 3.0 `post' table.    */
       if ( dict->cid_registry == 0xFFFFU && !cff2 )
         cffface->face_flags |= FT_FACE_FLAG_GLYPH_NAMES;
+#endif
 
       if ( dict->cid_registry != 0xFFFFU && pure_cff )
         cffface->face_flags |= FT_FACE_FLAG_CID_KEYED;
@@ -1009,11 +1054,11 @@
       {
         FT_CharMapRec  cmaprec;
         FT_CharMap     cmap;
-        FT_Int         nn;
+        FT_UInt        nn;
         CFF_Encoding   encoding = &cff->encoding;
 
 
-        for ( nn = 0; nn < cffface->num_charmaps; nn++ )
+        for ( nn = 0; nn < (FT_UInt)cffface->num_charmaps; nn++ )
         {
           cmap = cffface->charmaps[nn];
 
@@ -1038,7 +1083,7 @@
         cmaprec.encoding_id = TT_MS_ID_UNICODE_CS;
         cmaprec.encoding    = FT_ENCODING_UNICODE;
 
-        nn = cffface->num_charmaps;
+        nn = (FT_UInt)cffface->num_charmaps;
 
         error = FT_CMap_New( &cff_cmap_unicode_class_rec, NULL,
                              &cmaprec, NULL );
@@ -1049,7 +1094,7 @@
         error = FT_Err_Ok;
 
         /* if no Unicode charmap was previously selected, select this one */
-        if ( !cffface->charmap && nn != cffface->num_charmaps )
+        if ( !cffface->charmap && nn != (FT_UInt)cffface->num_charmaps )
           cffface->charmap = cffface->charmaps[nn];
 
       Skip_Unicode:
@@ -1119,7 +1164,7 @@
     }
 
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
-    cff_done_blend( cffface );
+    cff_done_blend( face );
     face->blend = NULL;
 #endif
   }

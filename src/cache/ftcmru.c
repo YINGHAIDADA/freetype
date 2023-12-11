@@ -4,7 +4,7 @@
  *
  *   FreeType MRU support (body).
  *
- * Copyright (C) 2003-2023 by
+ * Copyright (C) 2003-2021 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -262,8 +262,6 @@
       if ( list->clazz.node_done )
         list->clazz.node_done( node, list->data );
     }
-
-    /* zero new node in case of node_init failure */
     else if ( FT_ALLOC( node, list->clazz.node_size ) )
       goto Exit;
 
@@ -329,23 +327,29 @@
                                FTC_MruNode_CompareFunc  selection,
                                FT_Pointer               key )
   {
-    FTC_MruNode  first = list->nodes;
-    FTC_MruNode  prev, node;
+    FTC_MruNode  first, node, next;
 
 
-    if ( !first || !selection )
-      return;
-
-    prev = first->prev;
-    do
+    first = list->nodes;
+    while ( first && ( !selection || selection( first, key ) ) )
     {
-      node = prev;
-      prev = node->prev;
+      FTC_MruList_Remove( list, first );
+      first = list->nodes;
+    }
 
-      if ( selection( node, key ) )
-        FTC_MruList_Remove( list, node );
+    if ( first )
+    {
+      node = first->next;
+      while ( node != first )
+      {
+        next = node->next;
 
-    } while ( node != first );
+        if ( selection( node, key ) )
+          FTC_MruList_Remove( list, node );
+
+        node = next;
+      }
+    }
   }
 
 

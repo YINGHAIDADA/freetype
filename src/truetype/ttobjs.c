@@ -4,7 +4,7 @@
  *
  *   Objects manager (body).
  *
- * Copyright (C) 1996-2023 by
+ * Copyright (C) 1996-2021 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -140,34 +140,32 @@
 
     return error;
   }
+#endif /* TT_USE_BYTECODE_INTERPRETER */
 
 
-  /*
-   * Fonts embedded in PDFs are made unique by prepending randomization
-   * prefixes to their names: as defined in Section 5.5.3, 'Font Subsets',
-   * of the PDF Reference, they consist of 6 uppercase letters followed by
-   * the `+` sign.  For safety, we do not skip prefixes violating this rule.
+  /* The fonts embedded in PDF changes their family names
+   * by the randomization tag. PDF Reference 5.5.3 "Font
+   * Subsets" defines its format as 6 uppercase letters and
+   * '+' sign.  For safety, we do not skip the tag violating
+   * this rule.
    */
 
   static const FT_String*
   tt_skip_pdffont_random_tag( const FT_String*  name )
   {
-    if ( ft_isupper( name[0] ) &&
-         ft_isupper( name[1] ) &&
-         ft_isupper( name[2] ) &&
-         ft_isupper( name[3] ) &&
-         ft_isupper( name[4] ) &&
-         ft_isupper( name[5] ) &&
-              '+' == name[6]   &&
-                     name[7]   )
-    {
-      FT_TRACE7(( "name without randomization tag: %s\n", name + 7 ));
-      return name + 7;
-    }
+    unsigned int  i;
 
-    return name;
+
+    if ( ft_strlen( name ) < 8 || name[6] != '+' )
+      return name;
+
+    for ( i = 0; i < 6; i++ )
+      if ( !ft_isupper( name[i] ) )
+        return name;
+
+    FT_TRACE7(( "name without randomization tag: %s\n", name + 7 ));
+    return name + 7;
   }
-
 
   /* Compare the face with a list of well-known `tricky' fonts. */
   /* This list shall be expanded as we find more of them.       */
@@ -198,7 +196,7 @@
       "DFGothic-EB",        /* DynaLab Inc. 1992-1995 */
       "DFGyoSho-Lt",        /* DynaLab Inc. 1992-1995 */
       "DFHei",              /* DynaLab Inc. 1992-1995 [DFHei-Bd-WIN-HK-BF] */
-                            /* covers "DFHei-Md-HK-BF", maybe DynaLab Inc. */
+                            /* covers "DFHei-Md-HK-BF" maybe DynaLab Inc. */
 
       "DFHSGothic-W5",      /* DynaLab Inc. 1992-1995 */
       "DFHSMincho-W3",      /* DynaLab Inc. 1992-1995 */
@@ -314,8 +312,7 @@
 #define TRICK_SFNT_IDS_NUM_FACES  31
 
     static const tt_sfnt_id_rec sfnt_id[TRICK_SFNT_IDS_NUM_FACES]
-                                       [TRICK_SFNT_IDS_PER_FACE] =
-    {
+                                       [TRICK_SFNT_IDS_PER_FACE] = {
 
 #define TRICK_SFNT_ID_cvt   0
 #define TRICK_SFNT_ID_fpgm  1
@@ -556,8 +553,8 @@
     if ( face->family_name                               &&
          tt_check_trickyness_family( face->family_name ) )
     {
-      FT_TRACE3(( "found as a tricky font"
-                  " by its family name: %s\n", face->family_name ));
+      FT_TRACE3(( "found as a tricky font by "
+                  "its family name: %s\n", face->family_name ));
       return TRUE;
     }
 
@@ -566,15 +563,13 @@
     /* sfnt tables (`cvt', `fpgm', and `prep').                     */
     if ( tt_check_trickyness_sfnt_ids( (TT_Face)face ) )
     {
-      FT_TRACE3(( "found as a tricky font"
-                  " by its cvt/fpgm/prep table checksum\n" ));
+      FT_TRACE3(( "found as a tricky font by "
+                  "its cvt/fpgm/prep table checksum\n" ));
       return TRUE;
     }
 
     return FALSE;
   }
-
-#endif /* TT_USE_BYTECODE_INTERPRETER */
 
 
   /* Check whether `.notdef' is the only glyph in the `loca' table. */
@@ -584,7 +579,7 @@
     FT_Bool   result = FALSE;
 
     TT_Face   face = (TT_Face)ttface;
-    FT_ULong  asize;
+    FT_UInt   asize;
     FT_ULong  i;
     FT_ULong  glyph_index = 0;
     FT_UInt   count       = 0;
@@ -592,7 +587,7 @@
 
     for( i = 0; i < face->num_locations; i++ )
     {
-      tt_face_get_location( ttface, i, &asize );
+      tt_face_get_location( face, i, &asize );
       if ( asize > 0 )
       {
         count += 1;
@@ -721,17 +716,14 @@
     if ( error )
       goto Exit;
 
-#ifdef TT_USE_BYTECODE_INTERPRETER
     if ( tt_check_trickyness( ttface ) )
       ttface->face_flags |= FT_FACE_FLAG_TRICKY;
-#endif
 
     error = tt_face_load_hdmx( face, stream );
     if ( error )
       goto Exit;
 
-    if ( FT_IS_SCALABLE( ttface ) ||
-         FT_HAS_SBIX( ttface )    )
+    if ( FT_IS_SCALABLE( ttface ) )
     {
 #ifdef FT_CONFIG_OPTION_INCREMENTAL
       if ( !ttface->internal->incremental_interface )
@@ -780,6 +772,7 @@
     }
 
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
+
     {
       FT_UInt  instance_index = (FT_UInt)face_index >> 16;
 
@@ -787,11 +780,14 @@
       if ( FT_HAS_MULTIPLE_MASTERS( ttface ) &&
            instance_index > 0                )
       {
-        error = FT_Set_Named_Instance( ttface, instance_index );
+        error = TT_Set_Named_Instance( face, instance_index );
         if ( error )
           goto Exit;
+
+        tt_apply_mvar( face );
       }
     }
+
 #endif /* TT_CONFIG_OPTION_GX_VAR_SUPPORT */
 
     /* initialize standard glyph loading routines */
@@ -857,7 +853,7 @@
     face->cvt_program_size  = 0;
 
 #ifdef TT_CONFIG_OPTION_GX_VAR_SUPPORT
-    tt_done_blend( ttface );
+    tt_done_blend( face );
     face->blend = NULL;
 #endif
   }
@@ -1003,7 +999,7 @@
     {
       size->cvt[i] = FT_MulFix( face->cvt[i], scale );
       FT_TRACE6(( "  %3d: %f (%f)\n",
-                  i, (double)face->cvt[i] / 64, (double)size->cvt[i] / 64 ));
+                  i, face->cvt[i] / 64.0, size->cvt[i] / 64.0 ));
     }
     FT_TRACE6(( "\n" ));
 
@@ -1244,11 +1240,11 @@
     /* rescale CVT when needed */
     if ( size->cvt_ready < 0 )
     {
-      FT_UShort  i;
+      FT_UInt  i;
 
 
       /* all twilight points are originally zero */
-      for ( i = 0; i < size->twilight.n_points; i++ )
+      for ( i = 0; i < (FT_UInt)size->twilight.n_points; i++ )
       {
         size->twilight.org[i].x = 0;
         size->twilight.org[i].y = 0;
@@ -1257,7 +1253,7 @@
       }
 
       /* clear storage area */
-      for ( i = 0; i < size->storage_size; i++ )
+      for ( i = 0; i < (FT_UInt)size->storage_size; i++ )
         size->storage[i] = 0;
 
       size->GS = tt_default_graphics_state;
@@ -1337,28 +1333,38 @@
   /**************************************************************************
    *
    * @Function:
-   *   tt_size_reset_height
+   *   tt_size_reset
    *
    * @Description:
-   *   Recompute a TrueType size's ascender, descender, and height
-   *   when resolutions and character dimensions have been changed.
-   *   Used for variation fonts as an iterator function.
+   *   Reset a TrueType size when resolutions and character dimensions
+   *   have been changed.
    *
    * @Input:
-   *   ft_size ::
-   *     A handle to the target TT_Size object. This function will be called
-   *     through a `FT_Size_Reset_Func` pointer which takes `FT_Size`. This
-   *     function must take `FT_Size` as a result. The passed `FT_Size` is
-   *     expected to point to a `TT_Size`.
+   *   size ::
+   *     A handle to the target size object.
+   *
+   *   only_height ::
+   *     Only recompute ascender, descender, and height;
+   *     this flag is used for variation fonts where
+   *     `tt_size_reset' is used as an iterator function.
    */
   FT_LOCAL_DEF( FT_Error )
-  tt_size_reset_height( FT_Size  ft_size )
+  tt_size_reset( TT_Size  size,
+                 FT_Bool  only_height )
   {
-    TT_Size           size         = (TT_Size)ft_size;
-    TT_Face           face         = (TT_Face)size->root.face;
-    FT_Size_Metrics*  size_metrics = &size->hinted_metrics;
+    TT_Face           face;
+    FT_Size_Metrics*  size_metrics;
+
+
+    face = (TT_Face)size->root.face;
+
+    /* nothing to do for CFF2 */
+    if ( face->is_cff2 )
+      return FT_Err_Ok;
 
     size->ttmetrics.valid = FALSE;
+
+    size_metrics = &size->hinted_metrics;
 
     /* copy the result from base layer */
     *size_metrics = size->root.metrics;
@@ -1386,34 +1392,12 @@
 
     size->ttmetrics.valid = TRUE;
 
-    return FT_Err_Ok;
-  }
-
-
-  /**************************************************************************
-   *
-   * @Function:
-   *   tt_size_reset
-   *
-   * @Description:
-   *   Reset a TrueType size when resolutions and character dimensions
-   *   have been changed.
-   *
-   * @Input:
-   *   size ::
-   *     A handle to the target size object.
-   */
-  FT_LOCAL_DEF( FT_Error )
-  tt_size_reset( TT_Size  size )
-  {
-    FT_Error          error;
-    TT_Face           face         = (TT_Face)size->root.face;
-    FT_Size_Metrics*  size_metrics = &size->hinted_metrics;
-
-
-    error = tt_size_reset_height( (FT_Size)size );
-    if ( error )
-      return error;
+    if ( only_height )
+    {
+      /* we must not recompute the scaling values here since       */
+      /* `tt_size_reset' was already called (with only_height = 0) */
+      return FT_Err_Ok;
+    }
 
     if ( face->header.Flags & 8 )
     {
@@ -1446,8 +1430,6 @@
                                            size_metrics->y_ppem );
       size->ttmetrics.y_ratio = 0x10000L;
     }
-
-    size->widthp = tt_face_get_device_metrics( face, size_metrics->x_ppem, 0 );
 
     size->metrics = size_metrics;
 
@@ -1483,6 +1465,9 @@
     TT_Driver  driver = (TT_Driver)ttdriver;
 
     driver->interpreter_version = TT_INTERPRETER_VERSION_35;
+#ifdef TT_SUPPORT_SUBPIXEL_HINTING_INFINALITY
+    driver->interpreter_version = TT_INTERPRETER_VERSION_38;
+#endif
 #ifdef TT_SUPPORT_SUBPIXEL_HINTING_MINIMAL
     driver->interpreter_version = TT_INTERPRETER_VERSION_40;
 #endif
